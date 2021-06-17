@@ -1,0 +1,535 @@
+---
+title: "人氣教授養成指南 — 成為人人推薦的教授全攻略"
+subtitle: "UrSchool系所教授評價分析"
+author:
+  - "組名：我叫陳怜均請多多指教"
+  - "組員：杜昕 陳怜均 廖韋凱 陳柏宇"
+output:
+  html_document:
+    number_sections: yes
+    highlight: tango
+    toc: yes
+    toc_float:
+      collapsed: no
+    css: style.css
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, out.width="100%")
+```
+
+```{r packages, include = FALSE}
+library(readxl)
+library(tidyverse)
+library(showtext)
+library(psych)
+library(jiebaR)
+library(highcharter)
+library(tidytext)
+library(knitr)
+library(kableExtra)
+library(wordcloud2)
+
+# 設定字體
+showtext_auto(enable = TRUE)
+font_add("STHeiti", "STHeiti Medium.ttc")
+```
+
+# 專案背景與資料簡介
+## 專案背景
+還記得幾年前剛升上大學，拿到一張空白的課表，人生第一次要由自己來填上。焦急地查閱各種網路文章、評論留言、評價分數......一位位素昧平生的教授就這樣被化成一項項量化的分數，我們或多或少參考了這些分數，默默地過完了好一段大學歲月。
+
+想想自己有沒有可能因此而與某些知識領域擦身而過，或是不小心「誤入歧途」，得要逼自己習慣不適合自己的授課方式？
+
+從這個身為大學生揮之不去的煩惱出發，我們想知道這些對於教授、課堂的評論與分數到底是怎麼一回事。為此我們選了**「Urschool大學科系教授評價網」**作為研究對象，目標是找到一系列對於教授的評分與文字評價當中的端倪。
+
+21世紀是個「線上時代」，每個人都是一個巨量數據的集合。
+
+不論大至攸關國家社稷，小至謹謹生活瑣事，當我們面對一個陌生的問題時，第一個反應往往是上網查資料。
+然而透過區區幾十吋的電腦螢幕，我們能在瞬間獲得千百筆資料，新聞媒體、社群平台、電商官網......承載資料的網站五花八門，而在其間四處流竄的資料更是琳瑯滿目，在資料科學與視覺化技術的加持下，在我們眼前以各種形式呈現。
+
+>The world you see is not real, let alone what others want you to see.
+>
+>  S.J Watson,《別相信任何人》
+
+
+這個時代的我們就像住在一個名為「網際網路」的城市，到處閃爍著霓虹，一個不留神方向就錯了。我們需要的是一個「良好的方向感」，一個有效率獲取資訊，並正確處理和分析的素養。因此在本專案中，本組選擇了一個與身為學生的我們習習相關的主題來進行自我訓練。
+
+## 專案流程
+本組專案的流程包括網路爬蟲、量化分析、語意分析三項，各項流程的執行方式如下：
+
+1. 網路爬蟲：使用 Python 爬取 UrSchool 臺大教授的個人推薦分數、 同學 評價等資料， 並存成 Excel 檔。
+2. 量化分析：使用 R 語言分析每位教授的推薦分數與所屬系所、 口條、 課業 壓力、 給分甜度等因素的關係。
+3. 語意分析：使用 R 語言分析同學給教授的評價留言，分析個人推薦分數高、 低的教授留言內容的差異。
+
+## 資料簡介
+### 讀入資料
+在這次的專案裡，我們使用Python的BeautifulSoup、Selenium等套件爬取 [UrSchool](https://urschool.org/ntu/list) 的臺大教授評價資料，包括同學對每位教授的評分與同學在教授底下的留言，並儲存成Excel檔，再使用R語言進行更進階的操作。
+
+```{r 讀入資料與呈現 ,include=FALSE}
+raw_data <- read_excel('UrSchool教授資料.xlsx')
+show_raw_data <- kable(raw_data[1:3, 1:13], align="ccccccccccccc") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+```{r 印出原始資料}
+show_raw_data
+```
+### 資料前處理
+```{r Data Preprocessing, include = FALSE}
+# 資料前處理
+# 1. 將平均成績的等第換成分數
+score_converter <- function(col) {
+  output <- recode(col,
+                   "A+"=95, "A"=87, "A-"=82,
+                   "B+"=78, "B"=75, "B-"=70,
+                   "C+"=68, "C"=65, "C-"=60, "F"=50)
+  return(output)
+}
+
+# 2. 授課系所統一：一個系所有太多重複名稱，故統一之
+major_converter <- function(col) {
+  output <- recode(col,
+                   "教授"="財務金融學系", 
+                   "電機系"="電機工程學系", 
+                   "電子所"="電子工程學研究所",
+                   "法律系"="法律學系",
+                   "共教中心"="共同教育中心",
+                   "歷史系"="歷史學系",
+                   "社會所"="社會學系", 
+                   "生物產業機電工程學系"="生物機電工程學系",
+                   "文學院"="日本語文學系")
+  return(output)
+}
+
+# 3. 職稱統一：把兼職都去掉
+position_converter <- function(col) {
+  output <- recode(col,
+                   "副教授級專業技術人員"="副教授",
+                   "副教授兼副系主任"="副教授",
+                   "副教授兼任所長"="副教授",
+                   "副教授兼所長"="副教授",
+                   "副教授兼系主任"="副教授",
+                   "副教授兼主任"="副教授兼主任",
+                   "副主任"="教授",
+                   "合聘副教授"="副教授",
+                   "合聘兼任教授"="兼任教授",
+                   "合聘講師"="講師",
+                   "合聘教師"="教師",
+                   "合聘教授"="教授",
+                   "合聘教授"="教授",
+                   "合聘助理教授"="助理教授",
+                   "合授教師"="教師",
+                   "兼任教授"="兼任教授",
+                   "兼任教授兼文大校長"="兼任教授",
+                   "兼任老師"="兼任實務教師",
+                   "兼任語言教師"="兼任實務教師",
+                   "教授"="教授",
+                   "教授兼本所所長"="教授",
+                   "教授兼副教務長"="教授",              
+                   "教授兼副所長"="教授",
+                   "教授兼副系主任"="教授",
+                   "教授兼副主任"="教授",
+                   "教授兼科主任及研究所所長"="教授",
+                   "教授兼任代理所長"="教授",
+                   "教授兼任所長"="教授",
+                   "教授兼任系主任"="教授",
+                   "教授兼任院長"="教授",
+                   "教授兼生農學院副院長"="教授",                
+                   "教授兼所長"="教授",                          
+                   "教授兼網媒所所長"="教授",
+                   "教授兼系主任"="教授",
+                   "教授兼系主任兼所長"="教授",
+                   "教授兼藝文中心主任"="教授",
+                   "教授兼院長"="教授",
+                   "教授兼主任"="教授",
+                   "教授兼主任秘書"="教授",
+                   "客坐教師"="客座教師",
+                   "美國加州大學戴維斯校區比較病理學博士"="兼任教授",
+                   "美國伊利諾大學香檳分校博士"="教授",
+                   "名譽及兼任教授"="名譽教授",
+                   "名譽教授"="名譽教授",                            
+                   "實務老師"="實務教師",
+                   "所長兼教授"="教授",
+                   "特聘講座"="特聘講座教授",
+                   "特聘教授"="特聘教授",
+                   "特聘教授兼所長"="特聘教授",
+                   "特聘研究講座教授"="特聘講座教授",
+                   "系主任"="教授",
+                   "系主任兼教授"="教授",
+                   "正教授"="教授",
+                   "支援教師"="教師",
+                   "職特聘教授"="特聘教授",
+                   "終身特聘教授"="終身特聘教授",
+                   "終身職特聘教授"="終身特聘教授",
+                   "助理教授；榮譽研究員"="助理教授",
+                   "專任教授、所長"="教授",
+                   "專任教授兼系主任"="教授",
+                   "專任助理教授"="助理教授",
+                   "專業技術教師"="教師")
+  output <- str_trim(output, side="both")
+  return(output)
+}
+
+# 4. 學院
+get_department <- function(col) {
+  if_else(col %in% c("翻譯碩士學位學程", "華語教學碩士學位學程", "人類學系", "日本語文學系", "臺灣文學研究所", "圖書資訊學系", "外國語文學系", "戲劇學系", "藝術史研究所", "音樂學研究所", "語言學研究所", "哲學系", "中國文學系", "歷史學系"), "文學院",
+          if_else(col %in% c("大氣科學系", "地理環境資源學系", "地質科學系", "海洋研究所", "化學系", "氣候變遷與永續發展國際學位學程", "數學系", "天文物理研究所", "物理學系", "心理學系", "應用數學科學研究所", "應用物理研究所"), "理學院",
+                  if_else(col %in% c("公共事務研究所", "國家發展研究所", "經濟學系", "社會工作學系", "社會學系", "新聞研究所", "政治學系"), "社會科學院",
+                          if_else(col %in% c("病理學研究所", "毒理學研究所", "法醫學研究所", "分子醫學研究所", "護理學系", "基因體暨蛋白體醫學研究所", "解剖學暨細胞生物學研究所", "口腔生物科學研究所", "臨床牙醫學研究所", "臨床藥學研究所", "臨床醫學研究所", "免疫學研究所", "腦與心智科學研究所", "生理學研究所", "生物化學暨分子生物學研究所", "獸醫學系", "微生物學研究所", "物理治療學系", "牙醫學系", "牙醫專業學院", "藥理學研究所", "藥學系", "藥學專業學院", "醫療器材與醫學影像研究所", "醫學工程研究所", "醫學檢驗暨生物技術學系", "醫學教育暨生醫倫理研究所", "醫學系", "職能治療學系", "腫瘤醫學研究所"), "醫學院",
+                                  if_else(col %in% c("材料科學與工程學系", "高分子科學與工程學研究所", "工程科學及海洋工程學系", "工業工程學研究所", "化學工程學系", "環境工程學研究所", "機械工程學系", "建築與城鄉研究所", "土木工程學系", "應用力學研究所"), "工學院",
+                                          if_else(col %in% c("動物科學技術學系", "分子暨比較病理生物學研究所", "昆蟲學系", "臨床動物醫學研究所", "農業化學系", "農業經濟學系", "農藝學系", "森林環境暨資源學系", "生物產業傳播暨發展學系", "生物環境系統工程學系", "生物機電工程學系", "食品科技研究所", "園藝暨景觀學系", "植物病理與微生物學系"), "生農學院",
+                                                  if_else(col %in% c("財務金融學系", "工商管理學系暨商學研究所", "國際企業學系", "會計學系", "資訊管理學系"), "管理學院",
+                                                          if_else(col %in% c("公共衛生碩士學位學程", "公共衛生學系", "環境衛生研究所", "健康行為與社區科學研究所", "健康政策與管理研究所", "流行病學與預防醫學研究所", "食品安全與健康研究所", "職業醫學與工業衛生研究所"), "公衛學院",
+                                                                  if_else(col %in% c("電機工程學系", "電信工程學研究所", "電子工程學研究所", "光電工程學研究所", "生醫電子與資訊學研究所", "資訊工程學系", "資訊網路與多媒體研究所"), "電資學院",
+                                                                          if_else(col %in% c("法律學系", "科際整合法律學研究所"), "法律學院",
+                                                                                  if_else(col %in% c("分子與細胞生物學研究所", "基因體與系統生物學學位學程", "生化科技學系", "生化科學研究所", "生命科學系", "生態學與演化生物學研究所", "漁業科學研究所", "植物科學研究所"), "生命科學院",
+                                                                                          if_else(col %in% c("共同教育中心"), "共同教育中心",
+                                                                                                  if_else(col %in% c("跨領域整合與創新在職專班", "領導學程"), "其他", col)
+                                                                                                  )
+                                                                                          )
+                                                                                  )
+                                                                          )
+                                                                  )
+                                                          )
+                                                  )
+                                          )
+                                  )
+                          )
+                  )
+          )
+}
+
+
+data <- raw_data %>%
+  distinct(姓名, .keep_all = TRUE) %>%  # 5. 其他：姓名重複出現、無姓名
+  filter(!is.na(姓名)) %>%
+  mutate(調整後平均成績=score_converter(平均成績), 
+         授課系所=major_converter(授課系所),
+         職稱=position_converter(職稱), 
+         學院=get_department(授課系所))
+
+show_clean_data <- kable(data[1:3, c(1:13, 15:16)], align="ccccccccccccccc") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+本組進行的前處理如下：
+
+1. 等第制資料轉換：在資料的平均成績欄位為字串形式，我們將各等地轉換為百分制。
+2. 授課系所統一、職稱統一：經過我們研究發現，由於UrSchool的教授名單是任何人都能添加與更新，因此資料的授課系所、職稱有各種不同的名稱，而在此我們為了方便分析而將相同意義的名稱進行整理。
+3. 增加學院欄位：增加各個教授的授課學院。
+4. 除去重複資料：有部分教授名單重複等情形，因此我們將重複的教授自資料中剔除。
+前處理過後的資料如下
+
+```{r 印出前處理後資料}
+show_clean_data
+```
+# 量化分析
+```{r 圖表設定, include=FALSE}
+theme_update(text = element_text(family='STHeiti'), 
+             panel.background = element_rect(fill = NA),
+             plot.title = element_text(hjust = 0.5, color = "#03045e", face = "bold", size = 24),
+             axis.title = element_text(color = "#03045e", size = 20),
+             axis.text = element_text(color = "#03045e", size = 18), 
+             )
+```
+## 各系所各項指標分析
+我們以系所為單位，比較各個學院私心推薦、學到東西、口條好、課業壓力、給分甜度五項指標的平均，結果如下
+```{r 各個系所指標, include=FALSE}
+by_department <- data %>%
+  filter(!is.na(私心推薦), !is.na(學到東西), !is.na(口條好), !is.na(課業壓力), !is.na(給分甜度)) %>%
+  filter(!is.na(學院))
+
+department <- c("文學院", "理學院", "社會科學院", "醫學院", "工學院",
+                 "生農學院", "管理學院", "公衛學院", "電資學院", "法律學院", 
+                 "生命科學院", "共同教育中心", "其他")
+
+department_average <- by_department %>%
+  group_by(學院) %>%
+  summarize(教授資料數 = n(), 
+            平均私心推薦 = round(mean(私心推薦), 2), 
+            平均學到東西 = round(mean(學到東西), 2),
+            平均口條好 = round(mean(口條好), 2),
+            平均課業壓力 = round(mean(課業壓力), 2),
+            平均給分甜度 = round(mean(給分甜度), 2)) %>%
+  arrange(sapply(學院, function(y) which(y == department)))
+
+depart_score_analysis <- kable(department_average, align = 'cccccc') %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  column_spec(1, bold = T)
+```
+
+```{r 印出系所指標}
+depart_score_analysis
+```
+
+由上表我們可以發現以下幾項資訊：
+
+1. 文學院的資料筆數最多，可能是因為資料中有許多大學國文的老師及教授外語的老師。
+2. 法律學院在平均私心推薦、學到東西、口條、給分甜度分數都是所有學院最高的。可能代表法律學院教授在各項指標較獲得學生喜愛，或除了教授給分比較甜外，評分的學生給分也比較甜。
+3. 生農學院、生命科學院在平均私心推薦、學到東西、口條、給分甜度分數都是偏低的，皆未超過4分。
+4. 平均課業壓力以電資學院、法學院最高，而社會科學院最低。
+
+## 各項指標與私心推薦分數的相關性
+分析完各個系所各項指標的差異之後，接下來分析各項指標之間的相關性。如下圖，可發現同學私人推薦分數與是否學習到東西及教授的口條如何呈現高度正相關，其次為給分甜度，而相較之下課業壓力與私心推薦分數的相關性最低。
+我們認為是因為每個人偏好的課業壓力不同，且課業壓力高、低都有可能會受到學生的推薦，但應該不會有同學會推薦學不到東西或口條不佳的教授。而我們原本預想給分甜度的相關性可能與學到東西、口條好等指標相近，結果實際上差了一段距離，代表各位臺大的學生比起課程甜不甜，更重視是否能學習到知識，及上課的體驗，實在非常欣慰。
+```{r, include=FALSE}
+scores <- data %>%
+  select(私心推薦, 學到東西, 口條好, 課業壓力, 給分甜度)
+```
+
+```{r 各項指標相關係數, fig.width = 10, fig.height = 10}
+scores %>% 
+  pairs.panels(lm = T, smooth = F, ellipses = F, rug = F, hist.col = "#00b4d8", cex.labels=3, cex.axis=2)
+```
+
+## 使用迴歸模型預測推薦分數
+
+除了分析各項指標與私心推薦分數的相關性外，我們還使用傳統複迴歸模型求出私心推薦分數與各項指標的線性關係，如下
+```{r, include=FALSE}
+regression_result <- lm(私心推薦 ~ 學到東西 + 口條好 + 課業壓力 + 給分甜度, data = data)
+```
+
+```{r 迴歸結果}
+regression_result
+```
+
+得到迴歸模型的各項係數後，我們使用此係數估計每位教授的私心推薦分數，並比較其與實際私心推薦分數的關係，繪製成散布圖，如下
+```{r 根據迴歸結果預測私心推薦分數, include=FALSE}
+parameters <- summary(regression_result)$coefficients[1:5]
+
+score <- data %>%
+  mutate(預估私心推薦 = parameters[1] + parameters[2] * 學到東西 + parameters[3] * 口條好 + parameters[4] * 課業壓力 + parameters[5] * 給分甜度) %>%
+  select(私心推薦, 預估私心推薦) %>%
+  filter(!is.na(私心推薦), !is.na(預估私心推薦))
+
+predict_result <- ggplot(score, aes(x = 私心推薦, y = 預估私心推薦)) + 
+  geom_point(color = "#90e0ef", position = "jitter") + 
+  geom_abline(intercept = 0, slope = 1, color = "#90e0ef")
+```
+
+```{r, fig.width = 10, fig.height = 10}
+predict_result
+```
+
+## 其他可能影響私心推薦分數的指標
+除了原始資料已經有的數量資訊外，我們針對基本資料中的其他文字欄位進行分析，判斷是否與私心推薦分數有關聯。
+
+### 土博士 v.s. 洋墨水
+是否留學海外的教授可以在私心推薦分數上擁有較好的表現？以下我們透過檢查資料的「最高學歷」項目，將最高學歷於國內學校穫得者歸類為「本土學歷」，反之則歸類為「外國學歷」。完成歸類後，檢視私心推薦分數表現與之是否有關聯。
+然而由於網路資料在「最高學歷」項目的名稱上相當多元，透過以下篩選將有部分誤差。
+本部分結論有二：
+
+1. 依照此歸類資料，外國學歷資料數多於本土學歷（可能包含未被篩選出的本土學歷），因此即使高分群以擁有外國學歷的教授佔多數，也不一定代表兩個項目有因果關係或相關性。
+2. 不論在本土學歷或是外國學歷項目中，私心推薦分數獲得5分的教授皆為最多，或許意味著兩者相關性並不強。
+
+```{r 土博士 v.s. 洋墨水, include=FALSE}
+#列出辨識出本土學歷的關鍵字，由於部分學校的名稱可能誤將某些外國學校篩掉，關鍵字並未包含所有學校名稱
+type <- c(1:3150)
+TW <- list("臺","台","清",c("交","通"),c("成","功"),c("師","範"),c("中","興"),c("中","央"),c("中","山"),c("海","洋"),c("中","正"),c("高","雄"), c("彰","化"),c("陽","明"),c("嘉","義"),c("東","華"),c("雲","林"),c("屏","東"),c("宜","蘭"),c("虎","尾"),c("澎","湖"),c("勤","益"),c("金","門"),c("輔","仁"),c("淡","江"),c("逢","甲"),c("慈","濟")
+        )
+
+tw <- c("Taiwan","tawain","NTU","ntu", "taiwan")
+
+#使用上述關鍵字list歸類出是否是否為本土學歷
+for (x in seq_along(data$最高學歷)){
+  if (any(letters %in% strsplit(data$最高學歷[x],""))){
+  W1 <- strsplit(data$最高學歷[x]," ")
+  check1 <- w1[[1]]
+  for ( y in seq_along(tw)){
+    if (any(tw[y] %in% check1)) {type[x] <- "本土學歷"}
+  }
+  } else{
+  w2 <- strsplit(data$最高學歷[x],"")
+  check2 <- w2[[1]]
+  for ( y in seq_along(TW)){
+    if (any(TW[[y]] %in% check2)) {type[x] <- "本土學歷"}
+  }
+  }
+   if (type[x] != "本土學歷") {type[x] <- data$最高學歷[x]}
+}
+
+type[type != "本土學歷"] <- "外國學歷"
+data_with_type <- data %>%
+  mutate ("博士學位取得地" = type) %>%
+  filter(!is.na(博士學位取得地),!is.na(私心推薦))
+
+"私心推薦分數"<- as.character(data_with_type$私心推薦)
+
+#圖表：不論是擁有本土學歷還是外國學歷的教授，私心推薦分數獲得5分者皆為最多
+phd_place <- ggplot(data = data_with_type) +
+  geom_bar(aes(x = 博士學位取得地, fill = 私心推薦分數) , position = "fill") +
+  scale_y_continuous(breaks = c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1) ,labels =c("0%","10%","20%","30%","40%", "50%", "60%", "70%", "80%", "90%", "100%")) + 
+  coord_flip() + 
+  scale_fill_manual(values=c("#E9503F", "#E5786E", "#E19F9D", "#DDC7CC", "#D9EEFA", "#BEDDF2", "#6DA7D8", "#1C71BE", "#005FB5"))
+```
+
+``` {r, fig.width = 10, fig.height = 4}
+phd_place
+```
+
+### 教授有綽號是否代表與學生比較喜歡？
+以下驗證有無綽號與私心推薦分數表現的關聯性，發現雖然有綽號的教授僅佔約2%，但觀察有綽號的教授在各分數階層的分布時可以發現，有綽號的教授私心推薦分數為5分的比例超過50%，高於沒有綽號的教授的比例，但相對的有綽號的教授私心推薦分數為1分、2分的比例也較沒有綽號的教授高，可推測教授可能在學生推薦或不推薦一名教授的時候，較可能為該位教授取綽號，而綽號也可能因此為褒義或貶義。
+
+```{r 教授有綽號是否代表與學生比較喜歡, include=FALSE}
+#以私心推薦分數為x軸繪製直方圖，觀察有綽號的教授在各分數的佔比，然而有綽號的教授在所有教授中佔比偏低，無法直接比較
+nickname_data  <- data %>%
+  filter(!is.na(data$私心推薦)) %>%
+  mutate(是否有綽號 = if_else(is.na(綽號), "沒有綽號", "有綽號"))
+
+"私心推薦分數"<- as.character(nickname_data$私心推薦)
+
+nickname <- ggplot(data = nickname_data) +
+  geom_bar(aes(x = 是否有綽號, fill = 私心推薦分數) , position = "fill") +
+  scale_y_continuous(breaks = c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1) ,labels =c("0%","10%","20%","30%","40%", "50%", "60%", "70%", "80%", "90%", "100%")) +
+  coord_flip() +
+  scale_fill_manual(values=c("#E9503F", "#E5786E", "#E19F9D", "#DDC7CC", "#D9EEFA", "#BEDDF2", "#6DA7D8", "#1C71BE", "#005FB5"))
+```
+
+```{r, fig.width = 10, fig.height = 4}
+nickname
+```
+
+# 語意分析
+## 學生最重視什麼？
+從評論中利用jieba斷詞，並取出形容詞，觀察評論中出現最多的形容詞為何，就可推導出學生最重視什麼特質，分別做成圖表與文字雲如下，可見學生最重視的三大教授特質為認真、有趣、清楚。
+```{r, include=FALSE}
+comment <- data %>%
+  filter(!is.na(評論)) %>%
+  select(姓名, 評論)
+
+# 取得形容詞的函數
+get_adj = function(x){
+  stopifnot(inherits(x,"character"))
+  index = names(x) %in% c("a","ag","ad","an")
+  x[index]
+} 
+
+# 對每個教授的評論斷詞的函數
+get_segged_text <- function(x, num_){
+  seg <- worker("tag") # 設定斷詞器
+  comment_segged <- rep("", length(x$評論))
+  for (i in seq_along(x$評論)) {
+  # Segment each element in docs
+    segged <- segment(x$評論[i], seg)
+    segged <- get_adj(segged)
+  # Collapse the character vector into a string, separated by space
+    comment_segged[i] <- paste0(segged, collapse = " ")
+  }
+  # 將每個評論的斷詞串起來
+  comment_df <- tibble::tibble(
+  comment_id = seq_along(comment_segged),
+  content = comment_segged)
+  knitr::kable(comment_df, align = "c")
+  # 將每個評論的斷詞串起來
+  tidy_text_format <- comment_df %>%
+    unnest_tokens(output = "word", input = "content",
+                token = "regex", pattern = " ")
+  # 抓出前 30 個最常出現的形容詞
+  text_final <- tidy_text_format %>%
+    group_by(word) %>%
+    summarise(n = n()) %>%
+    filter(str_length(word) > 1) %>%
+    arrange(desc(n)) %>%
+    top_n(num_)
+  return(text_final)
+}
+
+total_text <- get_segged_text(comment,30)
+draw_word <- get_segged_text(comment, 100)
+wordcloud <- draw_word %>% wordcloud2(fontFamily = "STHeiti")
+
+important_personality <- highchart() %>% 
+  hc_size(height = 600, width = 800) %>%
+  hc_chart(type = "bar") %>%
+  hc_xAxis(categories = total_text$word) %>%
+  hc_add_series(name = "出現次數", 
+               data = total_text$n) %>%
+  hc_title(text = "評論中最常出現的詞彙 Top 30")
+```
+
+```{r}
+important_personality
+```
+
+```{r, fig.width = 10, fig.height = 10, dpi = 100}
+wordcloud
+```
+
+## 學生最重視什麼？（各個學院）
+對各學院的教授評論斷詞，觀察各學院學生最常評論教授的什麼特質。
+由下表可見，各個學院的學生之間所重視的特質幾乎相同，幾乎都是有趣、認真、清楚，值得注意的是，公衛學院的最高出現形容詞為無聊，出現次數僅有兩次，推斷是因為公衛學院的教授幾乎都無評論。
+```{r, include=FALSE}
+usually <- tibble(學院 = seq_along(department),
+                    最常形容 = seq_along(department),
+                    出現次數 = seq_along(department))
+for (i in seq_along(department)){
+  usually$學院[i] = department[i]
+  usually$最常形容[i] = get_segged_text(data %>%
+                                      filter(學院 == department[i]) %>%
+                                      select(評論),30)$word[1]
+  usually$出現次數[i] = get_segged_text(data %>%
+                                      filter(學院 == department[i]) %>%
+                                      select(評論),30)$n[1]
+}
+
+important_department <- kable(usually, align = 'ccc') %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  column_spec(1, bold = T)
+```
+
+```{r}
+important_department
+```
+
+## 高評價教授 v.s. 低評價教授
+對高評價教授和低評價教授的評論斷詞，觀察兩者的評論內容最常出現的形容詞有何不同。
+由下表可見，在此我們將所有私心推薦分數為5分的教授列為高評價教授，共433位。而低評價教授則為私心推薦分數小於3分的教授，共130位。高評價的教授的評論幾乎都是正面評價，而且正面字眼的出現頻率很高；相反的，低評價的教授也有正面評價，但出現頻率低很多，反而出現了很多負面字眼。
+```{r, include = FALSE}
+high_review <- data %>% 
+  filter(!is.na(評論), 私心推薦 == 5) %>% 
+  select(評論)
+
+low_review <- data %>%
+  filter(!is.na(評論), 私心推薦 <= 3) %>% 
+  select(評論)
+
+high_review_text <- get_segged_text(high_review, 30)
+low_review_text <- get_segged_text(low_review, 29)
+
+important_personality_high_score <- highchart() %>% 
+  hc_size(height = 600, width = 800) %>%
+  hc_chart(type = "bar") %>%
+  hc_xAxis(categories = high_review_text$word) %>%
+  hc_add_series(name = "出現次數", 
+                data = high_review_text$n) %>%
+  hc_title(text = "高評價教授評價最常出現的詞彙 Top 30") 
+  
+important_personality_low_score <- highchart() %>% 
+  hc_size(height = 600, width = 800) %>%
+  hc_chart(type = "bar") %>%
+  hc_xAxis(categories = low_review_text$word) %>%
+  hc_add_series(name = "出現次數", 
+                data = low_review_text$n) %>%
+  hc_title(text = "低評價教授評價最常出現的詞彙 Top 30")
+```
+
+``` {r}
+important_personality_high_score
+```
+
+``` {r}
+important_personality_low_score
+```
+
+# 總結
+綜合上述分析，我們判斷學生選課時可使用以下兩個項目來進行決策：
+
+1. 各項指標分數
+2. 評論內容
+
+首先，各項指標分數的部分，可以先從**私心推薦分數**對於教授和課堂獲得最粗略的認識，接著再以**學到東西**、**口條好**、**給分甜度**來判斷較細節的部分。至於**課業壓力分數**則是見仁見智，對推薦分數沒有什麼影響。
+
+其次，**評論**的部分可以參考留言者的用詞。我們發現私心推薦分數高的教授，相關的評論幾乎都是正面的評價，沒有負面的字眼；但私心推薦分數低的教授，相關的評論雖然還是會出現正面評價，但負面字眼出現的頻率也不低。
+
+最終結論：**選課時，可先從各項分數了解大致的情況，再參考同學的評論，來判斷該教授的教學情況。**
